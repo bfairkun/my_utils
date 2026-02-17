@@ -46,6 +46,10 @@ Homepage = "https://github.com/bfairkun/my_utils"
 Discussions = "https://github.com/bfairkun/my_utils/discussions"
 Changelog = "https://github.com/bfairkun/my_utils/releases"
 
+[project.scripts]
+bed6-to-bed12 = "my_utils.bed_utils:bed6_to_bed12_cli"
+bedtobed12 = "my_utils.bed_utils:bedtobed12_cli"
+
 # Configure setuptools to find packages in src directory
 [tool.setuptools]
 packages = ["my_utils"]
