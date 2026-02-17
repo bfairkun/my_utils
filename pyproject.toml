@@ -33,12 +33,13 @@ classifiers = [
 dependencies = [
   "numpy",
   "pandas",
+  "matplotlib",
   "pysam",
   "biopython",
-  "keras",
-  "tensorflow",
-  "spliceai",
 ]
+
+[project.optional-dependencies]
+spliceai = ["keras", "tensorflow", "spliceai"]
 
 [project.urls]
 Homepage = "https://github.com/bfairkun/my_utils"
@@ -49,6 +50,7 @@ Changelog = "https://github.com/bfairkun/my_utils/releases"
 [project.scripts]
 bed6-to-bed12 = "my_utils.bed_utils:bed6_to_bed12_cli"
 bedtobed12 = "my_utils.bed_utils:bedtobed12_cli"
+plot-block-signal = "my_utils.genometracks_utils:plot_block_signal_cli"
 
 # Configure setuptools to find packages in src directory
 [tool.setuptools]
