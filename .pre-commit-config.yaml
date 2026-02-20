@@ -1,83 +1,108 @@
+# Pre-commit configuration — defines hooks that run automatically before each `git commit`.
+# Install once per machine with: pre-commit install
+# Run manually on all files with: pre-commit run --all-files
+#
+# Each "repo" below is a collection of hooks fetched from that GitHub URL at the pinned version.
+
+# Settings for the pre-commit.ci service (a free bot that runs pre-commit on GitHub PRs).
+# If you're not signed up at pre-commit.ci, this section does nothing.
 ci:
   autoupdate_commit_msg: "chore(deps): update pre-commit hooks"
   autofix_commit_msg: "style: pre-commit fixes"
-  autoupdate_schedule: "monthly"
+  autoupdate_schedule: "monthly" # Bot opens a PR monthly to bump hook versions
 
+# Files to never run any hooks on (regex patterns)
 exclude: ^.cruft.json|.copier-answers.yml$
 
 repos:
+  # Runs black (Python formatter) on code blocks embedded inside Markdown/RST docs.
+  # Useful if you have code examples in your README. Low value if you don't write docs.
   - repo: https://github.com/adamchainz/blacken-docs
     rev: "1.20.0"
     hooks:
       - id: blacken-docs
         additional_dependencies: [black==25.*]
 
+  # A standard bundle of simple, fast checks from the pre-commit team
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: "v6.0.0"
     hooks:
-      - id: check-added-large-files
-      - id: check-case-conflict
-      - id: check-merge-conflict
-      - id: check-symlinks
-      - id: check-yaml
-      - id: debug-statements
-      - id: end-of-file-fixer
-      - id: mixed-line-ending
-      - id: name-tests-test
+      - id: check-added-large-files # Blocks accidentally committing huge files (e.g. data files)
+      - id: check-case-conflict # Catches files that differ only in case (breaks Windows/macOS)
+      - id: check-merge-conflict # Catches accidental "<<<<<<< HEAD" merge conflict markers left in files
+      - id: check-symlinks # Catches broken symlinks
+      - id: check-yaml # Validates YAML files are parseable
+      - id: debug-statements # Catches accidental `import pdb; pdb.set_trace()` left in code
+      - id: end-of-file-fixer # Ensures every file ends with a newline (Unix convention)
+      - id: mixed-line-ending # Ensures consistent line endings (LF vs CRLF)
+      - id: name-tests-test # Enforces test files are named test_*.py (not *_test.py)
         args: ["--pytest-test-first"]
-      - id: requirements-txt-fixer
-      - id: trailing-whitespace
+      - id: requirements-txt-fixer # Sorts requirements.txt alphabetically (no-op if you don't have one)
+      - id: trailing-whitespace # Removes trailing spaces at end of lines
 
+  # Checks for common mistakes in RST (reStructuredText) documentation files.
+  # Only relevant if you write .rst docs. Can be removed if you only use Markdown.
   - repo: https://github.com/pre-commit/pygrep-hooks
     rev: "v1.10.0"
     hooks:
-      - id: rst-backticks
-      - id: rst-directive-colons
-      - id: rst-inline-touching-normal
+      - id: rst-backticks # Catches single backtick `code` (should be double ``code`` in RST)
+      - id: rst-directive-colons # Catches RST directives missing their trailing ::
+      - id: rst-inline-touching-normal # Catches RST inline code touching normal text
 
+  # Prettier: opinionated formatter for YAML, Markdown, JSON, etc.
+  # Automatically reformats these files to a consistent style.
   - repo: https://github.com/rbubley/mirrors-prettier
     rev: "v3.8.1"
     hooks:
       - id: prettier
         types_or: [yaml, markdown, html, css, scss, javascript, json]
-        args: [--prose-wrap=always]
+        args: [--prose-wrap=always] # Wraps long lines in Markdown at the configured width
 
+  # Ruff: fast Python linter and formatter (replaces flake8, isort, and parts of black)
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: "v0.15.0"
     hooks:
-      - id: ruff-check
-        args: ["--fix", "--show-fixes"]
-      - id: ruff-format
+      - id: ruff-check # Linting: checks for bugs, style issues, etc. (rules configured in pyproject.toml)
+        args: ["--fix", "--show-fixes"] # Auto-fix what it can; show what was fixed
+      - id: ruff-format # Formatting: reformats Python code (like black)
 
+  # Spell checker for source code and docs
   - repo: https://github.com/codespell-project/codespell
     rev: "v2.4.1"
     hooks:
       - id: codespell
         additional_dependencies:
-          - tomli; python_version<'3.11'
+          - tomli; python_version<'3.11' # tomli needed to read pyproject.toml on Python <3.11
 
+  # Lints shell scripts (.sh files) for common bash mistakes
+  # No-op if you have no shell scripts in the repo
   - repo: https://github.com/shellcheck-py/shellcheck-py
     rev: "v0.11.0.1"
     hooks:
       - id: shellcheck
 
+  # Custom local hook: blocks common capitalization mistakes in source code
+  # e.g. "Github" instead of "GitHub", "Numpy" instead of "NumPy"
   - repo: local
     hooks:
       - id: disallow-caps
         name: Disallow improper capitalization
-        language: pygrep
-        entry: PyBind|Numpy|Cmake|CCache|Github|PyTest
-        exclude: .pre-commit-config.yaml
+        language: pygrep # Uses grep-style regex matching
+        entry: PyBind|Numpy|Cmake|CCache|Github|PyTest # These strings are blocked
+        exclude: .pre-commit-config.yaml # Don't check this file itself (the words appear here)
 
+  # Validates your pyproject.toml against the official schema
+  # Catches typos or invalid fields in pyproject.toml
   - repo: https://github.com/abravalheri/validate-pyproject
     rev: "v0.25"
     hooks:
       - id: validate-pyproject
         additional_dependencies: ["validate-pyproject-schema-store[all]"]
 
+  # Validates config files against their official JSON schemas
   - repo: https://github.com/python-jsonschema/check-jsonschema
     rev: "0.36.1"
     hooks:
-      - id: check-dependabot
-      - id: check-github-workflows
-      - id: check-readthedocs
+      - id: check-dependabot # Validates .github/dependabot.yml — remove if you deleted dependabot.yml
+      - id: check-github-workflows # Validates .github/workflows/*.yml for correctness
+      - id: check-readthedocs # Validates .readthedocs.yml — remove if you don't use ReadTheDocs

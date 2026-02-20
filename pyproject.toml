@@ -1,8 +1,15 @@
+# pyproject.toml is the modern Python project configuration file.
+# It replaces setup.py, setup.cfg, and requirements.txt for most purposes.
+
+# ── Build system ────────────────────────────────────────────────────────────
+# Tells pip/uv *how* to build the package when someone does `pip install .`
 [build-system]
-requires = ["setuptools>=77"]
+requires = ["setuptools>=77"] # Use setuptools as the build tool
 build-backend = "setuptools.build_meta"
 
 
+# ── Project metadata ─────────────────────────────────────────────────────────
+# This is what shows up on PyPI and in `pip show my_utils`
 [project]
 name = "my_utils"
 version = "0.1.0"
@@ -10,10 +17,13 @@ authors = [
   { name = "Benjamin Fair", email = "bfair.kun@gmail.com" },
 ]
 description = "u"
-readme = "README.md"
+readme = "README.md" # Content of README.md becomes the PyPI long description
 license = "BSD-3-Clause"
 license-files = ["LICENSE"]
-requires-python = ">=3.10"
+requires-python = ">=3.10" # Minimum Python version users need
+
+# Classifiers are tags that appear on PyPI for filtering/discovery.
+# They don't affect installation — purely informational.
 classifiers = [
   "Development Status :: 1 - Planning",
   "Intended Audience :: Science/Research",
@@ -30,6 +40,8 @@ classifiers = [
   "Topic :: Scientific/Engineering",
   "Typing :: Typed",
 ]
+
+# Packages always installed when someone does `pip install my_utils`
 dependencies = [
   "numpy",
   "pandas",
@@ -38,66 +50,91 @@ dependencies = [
   "biopython",
 ]
 
+# ── Optional dependencies ────────────────────────────────────────────────────
+# Installed only when explicitly requested: `pip install my_utils[spliceai]`
+# Keeps the base install lightweight for users who don't need these heavy ML deps
 [project.optional-dependencies]
 spliceai = ["keras", "tensorflow", "spliceai"]
 
+# ── Project URLs ─────────────────────────────────────────────────────────────
+# Links shown on the PyPI page sidebar
 [project.urls]
 Homepage = "https://github.com/bfairkun/my_utils"
 "Bug Tracker" = "https://github.com/bfairkun/my_utils/issues"
 Discussions = "https://github.com/bfairkun/my_utils/discussions"
 Changelog = "https://github.com/bfairkun/my_utils/releases"
 
+# ── Command-line scripts ─────────────────────────────────────────────────────
+# Creates shell commands when the package is installed.
+# Format: "shell-command-name" = "module:function"
+# After `pip install my_utils`, users can run `bed6-to-bed12` directly in terminal.
 [project.scripts]
 bed6-to-bed12 = "my_utils.bed_utils:bed6_to_bed12_cli"
 bedtobed12 = "my_utils.bed_utils:bedtobed12_cli"
 plot-block-signal = "my_utils.genometracks_utils:plot_block_signal_cli"
 
-# Configure setuptools to find packages in src directory
+# ── Setuptools configuration ──────────────────────────────────────────────────
+# Tells setuptools where to find the Python package source code
 [tool.setuptools]
-packages = ["my_utils"]
-package-dir = {"" = "src"}
+packages = ["my_utils"] # The package name inside the src/ directory
+package-dir = {"" = "src"} # Root of package source is the src/ directory
 
+# Include the py.typed marker file (signals to type checkers that this package supports types)
 [tool.setuptools.package-data]
 my_utils = ["py.typed"]
 
+# ── Dependency groups (dev-only deps) ────────────────────────────────────────
+# These are NOT installed for regular users — only for developers running `uv sync`
+# This is the modern replacement for requirements-dev.txt
 [dependency-groups]
 test = [
   "pytest >=9",
-  "pytest-cov >=7",
+  "pytest-cov >=7", # Plugin that measures code coverage during pytest runs
 ]
 dev = [
-  { include-group = "test" },
+  { include-group = "test" }, # dev group includes everything in test group
 ]
+# Packages needed to build the documentation website (mkdocs)
+# Install with: uv sync --group docs
 docs = [
-    "markdown>=3.9",
-    "mdx-include>=1.4.2",
-    "mkdocs-material>=9.1.19",
-    "mkdocs>=1.1.2",
-    "mkdocstrings-python>=1.18.2",
-    "pyyaml>=6.0.1",
+  "markdown>=3.9",
+  "mdx-include>=1.4.2",
+  "mkdocs-material>=9.1.19",
+  "mkdocs>=1.1.2",
+  "mkdocstrings-python>=1.18.2",
+  "pyyaml>=6.0.1",
 ]
 
 
+# ── Pytest configuration ──────────────────────────────────────────────────────
 [tool.pytest]
 minversion = "9.0"
-addopts = ["-ra", "--showlocals"]
-strict = true
+addopts = ["-ra", "--showlocals"] # Default flags added to every pytest run
+# -ra: show summary of all non-passing tests
+# --showlocals: show local variable values in tracebacks
+strict = true # Markers not declared in this file cause an error (prevents typos)
 filterwarnings = [
-  "error",
+  "error", # Treat all Python warnings as test failures (strict but catches real issues)
 ]
-log_level = "INFO"
+log_level = "INFO" # Show INFO-level log messages during tests
 testpaths = [
-  "tests",
+  "tests", # Only look for tests in the tests/ directory
 ]
 
 
+# ── Coverage configuration ────────────────────────────────────────────────────
+# Controls what pytest-cov measures and reports
 [tool.coverage]
-run.source = ["my_utils"]
+run.source = ["my_utils"] # Only measure coverage for your own package (not dependencies)
 report.exclude_also = [
-  '\.\.\.',
-  'if typing.TYPE_CHECKING:',
+  '\.\.\.',             # Exclude lines that are just `...` (abstract method stubs)
+  'if typing.TYPE_CHECKING:', # Exclude type-checking-only imports
 ]
 
+# ── Mypy configuration ────────────────────────────────────────────────────────
+# Mypy is a static type checker. This config is here but mypy is NOT run in CI
+# (we removed it — too strict without type stubs for numpy/pandas/matplotlib).
+# You could still run it locally: mypy src/
 [tool.mypy]
 files = ["src", "tests"]
 python_version = "3.10"
@@ -114,83 +151,92 @@ disallow_untyped_defs = true
 disallow_incomplete_defs = true
 
 
+# ── Ruff configuration ────────────────────────────────────────────────────────
+# Ruff is the linter/formatter that runs via pre-commit on every commit.
 [tool.ruff]
 
 [tool.ruff.lint]
+# Ruff has hundreds of rules organized into groups. By default only basic "E"/"F" rules are on.
+# extend-select adds more rule groups on top of the defaults.
 extend-select = [
-  "ARG",    # flake8-unused-arguments
-  "B",      # flake8-bugbear
-  "BLE",    # flake8-blind-except
-  "C4",     # flake8-comprehensions
-  "DTZ",    # flake8-datetimez
-  "EM",     # flake8-errmsg
-  "EXE",    # flake8-executable
-  "FA",     # flake8-future-annotations
-  "FLY",    # flynt
-  "FURB",   # refurb
-  "G",      # flake8-logging-format
-  "I",      # isort
-  "ICN",    # flake8-import-conventions
-  "ISC",    # flake8-implicit-str-concat
-  "LOG",    # flake8-logging
-  "NPY",    # NumPy specific rules
-  "PD",     # pandas-vet
-  "PERF",   # perflint
-  "PGH",    # pygrep-hooks
-  "PIE",    # flake8-pie
-  "PL",     # pylint
-  "PT",     # flake8-pytest-style
-  "PTH",    # flake8-use-pathlib
-  "PYI",    # flake8-pyi
-  "Q",      # flake8-quotes
-  "RET",    # flake8-return
-  "RSE",    # flake8-raise
-  "RUF",    # Ruff-specific
-  "SIM",    # flake8-simplify
-  "SLOT",   # flake8-slots
-  "T10",    # flake8-debugger
-  "T20",    # flake8-print
-  "TC",     # flake8-type-checking
-  "TRY",    # tryceratops
-  "UP",     # pyupgrade
-  "YTT",    # flake8-2020
+  "ARG",  # Warn on unused function arguments
+  "B",    # flake8-bugbear: common bug patterns (e.g. mutable default args)
+  "BLE",  # Warn on bare `except:` (catches everything including KeyboardInterrupt)
+  "C4",   # Better ways to write list/dict/set comprehensions
+  "DTZ",  # Require timezone-aware datetimes (prevents subtle bugs)
+  "EM",   # Exception message style (we ignore most of these below)
+  "EXE",  # Check that executable scripts have the right shebang
+  "FA",   # Suggest `from __future__ import annotations` for cleaner type hints
+  "FLY",  # Suggest f-strings instead of .join() for simple cases
+  "FURB", # Modernization suggestions (refurb)
+  "G",    # Correct use of the `logging` module
+  "I",    # isort: enforce consistent import ordering
+  "ICN",  # Enforce conventional import aliases (e.g. `import numpy as np`)
+  "ISC",  # Warn on implicitly concatenated string literals
+  "LOG",  # Additional logging best practices
+  "NPY",  # NumPy-specific rules
+  "PD",   # pandas-vet: common pandas mistakes
+  "PERF", # Performance suggestions
+  "PGH",  # pygrep-hooks ported to ruff
+  "PIE",  # Miscellaneous improvements
+  "PL",   # Pylint rules ported to ruff
+  "PT",   # pytest style rules
+  "PTH",  # Suggest pathlib over os.path
+  "PYI",  # Rules for .pyi stub files
+  "Q",    # Enforce consistent quote style
+  "RET",  # Function return statement improvements
+  "RSE",  # Better exception raising style
+  "RUF",  # Ruff-specific rules
+  "SIM",  # Simplification suggestions
+  "SLOT", # Suggest __slots__ where appropriate
+  "T10",  # Warn on leftover debugger calls (pdb, breakpoint)
+  "T20",  # Warn on leftover print() statements
+  "TC",   # Move type-only imports into `if TYPE_CHECKING:` blocks
+  "TRY",  # Exception handling style (we ignore most of these below)
+  "UP",   # pyupgrade: modernize Python syntax
+  "YTT",  # Warn on sys.version comparisons that break in Python 4
 ]
+
+# Rules we've turned off because they're too pedantic for this codebase
 ignore = [
-  "PLR09",    # Too many <...>
-  "PLR2004",  # Magic value used in comparison
-  "SIM108",   # Use ternary operator (if-else is often more readable)
-  "PLW2901",  # Loop variable overwritten (common pattern: line = line.strip())
-  "TRY003",   # Avoid long messages outside exception class (too pedantic)
-  "EM101",    # Exception string literal (too pedantic)
-  "EM102",    # Exception f-string literal (too pedantic)
-  "PT019",    # Fixture without value (false positives with used fixtures)
-  "RET504",   # Unnecessary assignment before return (often improves readability)
-  "PTH123",   # Use Path.open() instead of open() (too pedantic)
-  "RUF005",   # Use iterable unpacking instead of concatenation (stylistic)
-  "ICN001",   # matplotlib should be imported as mpl (not always desired)
-  "PD011",    # Use .to_numpy() instead of .values (too pedantic)
+  "PLR09",   # Too many branches/arguments/statements (too strict for scientific code)
+  "PLR2004", # Magic value in comparison (e.g. `if x == 2` — fine for scientific code)
+  "SIM108",  # Prefer ternary operator over if-else (if-else is often more readable)
+  "PLW2901", # Loop variable overwritten (common pattern: `line = line.strip()`)
+  "TRY003",  # Avoid long messages outside exception class (too pedantic)
+  "EM101",   # Don't use string literals in exceptions (too pedantic)
+  "EM102",   # Don't use f-strings in exceptions (too pedantic)
+  "PT019",   # Pytest fixture style — false positives with fixtures that have return values
+  "RET504",  # Remove intermediate variable before return (sometimes hurts readability)
+  "PTH123",  # Use Path.open() instead of open() (too pedantic)
+  "RUF005",  # Use iterable unpacking instead of list concatenation (stylistic)
+  "ICN001",  # matplotlib must be imported as `mpl` (we prefer full name)
+  "PD011",   # Use .to_numpy() instead of .values (too pedantic)
 ]
-# Uncomment if using a _compat.typing backport
-# typing-modules = ["my_utils._compat.typing"]
 
+# Per-file rule overrides
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["T20"]
-"noxfile.py" = ["T20"]
-"docs/examples/**" = ["T20"]
-"src/my_utils/bed_utils.py" = ["T20", "PLC0415"]        # CLI functions use print and lazy imports
-"src/my_utils/genometracks_utils.py" = ["T20", "PLC0415"]  # CLI functions use print and lazy imports
+"tests/**" = ["T20"]              # Allow print() in tests
+"noxfile.py" = ["T20"]            # Allow print() in noxfile
+"docs/examples/**" = ["T20"]      # Allow print() in docs examples
+"src/my_utils/bed_utils.py" = ["T20", "PLC0415"]        # CLI functions use print + lazy imports
+"src/my_utils/genometracks_utils.py" = ["T20", "PLC0415"] # CLI functions use print + lazy imports
 
 
+# ── Pylint configuration ──────────────────────────────────────────────────────
+# Pylint is a separate, older linter. It's configured here but NOT run in CI.
+# (We removed the pylint CI step — it was the one that couldn't build pysam.)
+# You could run it locally: pylint my_utils
 [tool.pylint]
 py-version = "3.10"
 ignore-paths = [".*/_version.py"]
 reports.output-format = "colorized"
-similarities.ignore-imports = "yes"
+similarities.ignore-imports = "yes" # Don't flag identical imports as code duplication
 messages_control.disable = [
-  "design",
-  "fixme",
-  "line-too-long",
-  "missing-module-docstring",
-  "missing-function-docstring",
-  "wrong-import-position",
+  "design",                    # Disable all design-related warnings (too many args, etc.)
+  "fixme",                     # Allow TODO/FIXME comments
+  "line-too-long",             # Ruff handles line length
+  "missing-module-docstring",  # Don't require module-level docstrings
+  "missing-function-docstring", # Don't require function docstrings
+  "wrong-import-position",     # Allow imports inside functions (for lazy imports in CLI)
 ]

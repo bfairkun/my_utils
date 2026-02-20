@@ -1,61 +1,84 @@
+# CI = Continuous Integration: runs tests automatically on every push/PR
 name: CI
 
+# Defines what events trigger this workflow
 on:
-  workflow_dispatch:
-  pull_request:
+  workflow_dispatch: # Allows manually clicking "Run workflow" in the GitHub Actions UI
+  pull_request: # Runs on every pull request (useful if collaborators open PRs)
   push:
     branches:
-      - main
+      - main # Only runs on pushes to main (not every branch you might create)
 
+# Prevents multiple runs of this workflow piling up at the same time.
+# e.g. if you push twice quickly, the first run gets cancelled.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }} # Unique key per workflow+branch combo
+  cancel-in-progress: true # Cancel old run when a new one starts
 
+# Environment variables available to all jobs below
 env:
-  # Many color libraries just need this variable to be set to any value.
-  # Set it to 3 to support 8-bit color graphics (256 colors per channel)
-  # for libraries that care about the value set.
-  FORCE_COLOR: 3
+  FORCE_COLOR: 3 # Makes terminal output colorized (easier to read logs)
 
 jobs:
   checks:
+    # Display name in GitHub UI — matrix variables get substituted in
     name: Check Python ${{ matrix.python-version }} on ${{ matrix.runs-on }}
-    runs-on: ${{ matrix.runs-on }}
+    runs-on: ${{ matrix.runs-on }} # OS comes from the matrix below
+
     strategy:
-      fail-fast: false
+      fail-fast: false # If one matrix combo fails, keep running the others
       matrix:
-        python-version: ["3.10", "3.12"]
-        runs-on: [ubuntu-latest, macos-latest, macos-15-intel]
+        # Every combination of python-version x runs-on gets its own job.
+        # 2 versions x 3 OSes = 6 parallel jobs total.
+        python-version: ["3.10", "3.12"] # Stable versions with pysam binary wheels
+        runs-on: [ubuntu-latest, macos-latest, macos-15-intel] # Intel mac for older hardware coverage
 
     steps:
+      # Step 1: Clone your repo into the runner machine
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 0
+          fetch-depth: 0 # Full git history (not just latest commit) — some tools need this
 
+      # Step 2: Install the requested Python version on the runner
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
 
+      # Step 3: Install uv (fast Python package/venv manager, replaces pip+venv)
       - uses: astral-sh/setup-uv@v7
 
+      # Step 4a: Install C libraries needed to compile pysam on Linux
+      # (Only needed because pysam wraps a C library called htslib)
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libbz2-dev liblzma-dev libcurl4-openssl-dev zlib1g-dev
 
+      # Step 4b: Same but for macOS — brew install xz provides liblzma
       - name: Install system dependencies (macOS)
         if: runner.os == 'macOS'
         run: brew install xz
 
+      # Step 5: Install your package + dev dependencies (pytest, pytest-cov) into a venv
       - name: Install package
         run: uv sync
 
+      # Step 6: Run pytest
+      # >- is YAML syntax meaning "join the next lines into one long command"
       - name: Test package
         run: >-
           uv run pytest -ra --cov --cov-report=xml --cov-report=term
           --durations=20
+        # -ra              show a summary of all non-passing tests at the end
+        # --cov            measure which lines of your code are executed during tests
+        # --cov-report=xml save coverage as XML file (consumed by codecov below)
+        # --cov-report=term print coverage table to terminal log
+        # --durations=20   print the 20 slowest tests (helps find bottlenecks)
 
+      # Step 7: Upload coverage data to codecov.io (free service that tracks coverage over time)
+      # Requires CODECOV_TOKEN to be set in your GitHub repo's Settings > Secrets
+      # You can delete this step if you don't care about coverage tracking
       - name: Upload coverage report
         uses: codecov/codecov-action@v5
         with:

@@ -1,25 +1,25 @@
+# CD = Continuous Deployment: builds the package and (optionally) publishes to PyPI
 name: CD
 
 on:
-  workflow_dispatch:
-  pull_request:
+  workflow_dispatch: # Manual trigger from GitHub UI
+  pull_request: # Run the build check on PRs too (but not the publish step)
   push:
     branches:
-      - main
+      - main # Run on every push to main
   release:
     types:
-      - published
+      - published # Also run when you publish a GitHub Release — this is what triggers PyPI upload
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
-  # Many color libraries just need this to be set to any value, but at least
-  # one distinguishes color depth, where "3" -> "256-bit color".
-  FORCE_COLOR: 3
+  FORCE_COLOR: 3 # Colorized terminal output
 
 jobs:
+  # Job 1: Build the package and validate it looks correct
   dist:
     name: Distribution build
     runs-on: ubuntu-latest
@@ -27,34 +27,46 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 0
+          fetch-depth: 0 # Full git history needed for version detection
 
+      # Builds a wheel (.whl) and source distribution (.tar.gz), then validates:
+      #   - metadata is correct (name, version, license, etc.)
+      #   - package is importable
+      #   - README renders correctly on PyPI
+      # Also saves the built files as a GitHub Actions "artifact" so the publish job can use them
       - uses: hynek/build-and-inspect-python-package@v2
 
+  # Job 2: Publish to PyPI — only runs when you publish a GitHub Release
   publish:
-    needs: [dist]
+    needs: [dist] # Must wait for the dist job to succeed first
     name: Publish to PyPI
-    environment: pypi
+    environment: pypi # Uses a GitHub "environment" — you can add approval gates here if desired
     permissions:
-      id-token: write
-      attestations: write
-      contents: read
+      id-token: write # Required for PyPI trusted publishing (no password needed)
+      attestations: write # Required to cryptographically sign the package
+      contents: read # Required to read repo contents
     runs-on: ubuntu-latest
+    # This condition means: only run this job on an actual GitHub Release publish, not regular pushes
     if: github.event_name == 'release' && github.event.action == 'published'
 
     steps:
+      # Download the built wheel/sdist from the dist job above
       - uses: actions/download-artifact@v7
         with:
           name: Packages
           path: dist
 
+      # Cryptographically sign the package with build provenance info (proves it came from this repo)
+      # This is optional but good practice for public packages
       - name: Generate artifact attestation for sdist and wheel
         uses: actions/attest-build-provenance@v3
         with:
           subject-path: "dist/*"
 
+      # Upload to PyPI
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          # Remember to tell (test-)pypi about this repo before publishing
-          # Remove this line to publish to PyPI
+          # !! Currently pointed at TEST PyPI, not real PyPI !!
+          # Test PyPI is a sandbox — packages uploaded there are not publicly installable.
+          # When you're ready to publish for real, delete the repository-url line below.
           repository-url: https://test.pypi.org/legacy/
