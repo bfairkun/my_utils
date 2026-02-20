@@ -7,6 +7,10 @@ from pathlib import Path
 
 import pytest
 
+pytest.importorskip(
+    "spliceai"
+)  # skip entire file if spliceai optional dep not installed
+
 # Add src to path so we can import spliceai_utils
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
