@@ -40,15 +40,6 @@ repos:
       - id: requirements-txt-fixer # Sorts requirements.txt alphabetically (no-op if you don't have one)
       - id: trailing-whitespace # Removes trailing spaces at end of lines
 
-  # Checks for common mistakes in RST (reStructuredText) documentation files.
-  # Only relevant if you write .rst docs. Can be removed if you only use Markdown.
-  - repo: https://github.com/pre-commit/pygrep-hooks
-    rev: "v1.10.0"
-    hooks:
-      - id: rst-backticks # Catches single backtick `code` (should be double ``code`` in RST)
-      - id: rst-directive-colons # Catches RST directives missing their trailing ::
-      - id: rst-inline-touching-normal # Catches RST inline code touching normal text
-
   # Prettier: opinionated formatter for YAML, Markdown, JSON, etc.
   # Automatically reformats these files to a consistent style.
   - repo: https://github.com/rbubley/mirrors-prettier
@@ -103,6 +94,4 @@ repos:
   - repo: https://github.com/python-jsonschema/check-jsonschema
     rev: "0.36.1"
     hooks:
-      - id: check-dependabot # Validates .github/dependabot.yml — remove if you deleted dependabot.yml
       - id: check-github-workflows # Validates .github/workflows/*.yml for correctness
-      - id: check-readthedocs # Validates .readthedocs.yml — remove if you don't use ReadTheDocs

@@ -75,11 +75,3 @@ jobs:
         # --cov-report=xml save coverage as XML file (consumed by codecov below)
         # --cov-report=term print coverage table to terminal log
         # --durations=20   print the 20 slowest tests (helps find bottlenecks)
-
-      # Step 7: Upload coverage data to codecov.io (free service that tracks coverage over time)
-      # Requires CODECOV_TOKEN to be set in your GitHub repo's Settings > Secrets
-      # You can delete this step if you don't care about coverage tracking
-      - name: Upload coverage report
-        uses: codecov/codecov-action@v5
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
