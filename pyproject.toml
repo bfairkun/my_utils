@@ -89,7 +89,6 @@ my_utils = ["py.typed"]
 [dependency-groups]
 test = [
   "pytest >=9",
-  "pytest-cov >=7", # Plugin that measures code coverage during pytest runs
 ]
 dev = [
   { include-group = "test" }, # dev group includes everything in test group
