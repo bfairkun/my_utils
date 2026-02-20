@@ -40,8 +40,7 @@ def parse_ucsc_tracks(path):
 
     for key, value in data.items():
         # Track data is a dict mapping chrom -> list of [start, end, value]
-        if (isinstance(value, dict)
-                and all(isinstance(v, list) for v in value.values())):
+        if isinstance(value, dict) and all(isinstance(v, list) for v in value.values()):
             track = {}
             for chrom, intervals in value.items():
                 track[chrom] = [(iv[0], iv[1], iv[2]) for iv in intervals]
@@ -102,8 +101,7 @@ def _intersect_block_intervals(intervals, interval_starts, block_start, block_en
     n = len(intervals)
     # Find candidate intervals overlapping [block_start, block_end)
     left = bisect_right(interval_starts, block_start) - 1
-    if left < 0:
-        left = 0
+    left = max(left, 0)
     right = bisect_left(interval_starts, block_end)
 
     cursor = block_start
@@ -209,7 +207,8 @@ def get_block_signal_df(tracks_path, bed12_path, track_names=None, padding=0):
                     intervals = tracks[tname].get(chrom, [])
                     iv_starts = track_interval_starts[tname].get(chrom, [])
                     for _start, _end, _val in _intersect_block_intervals(
-                            intervals, iv_starts, merged_start, merged_end):
+                        intervals, iv_starts, merged_start, merged_end
+                    ):
                         breakpoints.add(_start)
                         breakpoints.add(_end)
 
@@ -244,8 +243,15 @@ def get_block_signal_df(tracks_path, bed12_path, track_names=None, padding=0):
 
                     rows.append(row)
 
-    col_order = ["bed_name", "chrom", "block_id", "start", "end", "width",
-                 "in_block"] + track_name_list
+    col_order = [
+        "bed_name",
+        "chrom",
+        "block_id",
+        "start",
+        "end",
+        "width",
+        "in_block",
+    ] + track_name_list
     return pd.DataFrame(rows, columns=col_order)
 
 
@@ -256,8 +262,15 @@ def _parse_region(region_str):
     return chrom, int(start_str.replace(",", "")), int(end_str.replace(",", ""))
 
 
-def plot_block_signal(df, output_path, track_names=None, region=None,
-                      bed_names=None, ylim=None, colors=None):
+def plot_block_signal(
+    df,
+    output_path,
+    track_names=None,
+    region=None,
+    bed_names=None,
+    ylim=None,
+    colors=None,
+):
     """
     Plot signal across blocks from a get_block_signal_df() DataFrame.
 
@@ -277,6 +290,7 @@ def plot_block_signal(df, output_path, track_names=None, region=None,
         colors: List of colors (one per track), or None for matplotlib tab10/tab20
     """
     import matplotlib
+
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from matplotlib.backends.backend_pdf import PdfPages
@@ -361,15 +375,23 @@ def plot_block_signal(df, output_path, track_names=None, region=None,
                     for _, row in bdf.iterrows():
                         xs.extend([row["start"], row["end"]])
                         ys.extend([row[tname], row[tname]])
-                    ax.plot(xs, ys, linewidth=0.8, color=colors[t_idx],
-                            label=tname if col_idx == 0 else None)
+                    ax.plot(
+                        xs,
+                        ys,
+                        linewidth=0.8,
+                        color=colors[t_idx],
+                        label=tname if col_idx == 0 else None,
+                    )
 
                 # Shade in_block regions
                 if has_in_block:
                     for _, row in bdf[bdf["in_block"]].iterrows():
                         ax.axvspan(
-                            row["start"], row["end"],
-                            alpha=0.15, color="orange", linewidth=0,
+                            row["start"],
+                            row["end"],
+                            alpha=0.15,
+                            color="orange",
+                            linewidth=0,
                         )
 
                 ax.set_ylim(ylim)
@@ -392,34 +414,67 @@ def plot_block_signal_cli():
 
     parser = argparse.ArgumentParser(
         description="Compute per-block signal from a UCSC Genome Browser JSON export "
-                    "and a BED12 file, then write a TSV table and/or a PDF of plots."
+        "and a BED12 file, then write a TSV table and/or a PDF of plots."
     )
     parser.add_argument("tracks_json", help="Path to gzip-compressed UCSC JSON file")
     parser.add_argument("bed12", help="Path to BED12 file")
-    parser.add_argument("-o", "--output-prefix", required=True,
-                        help="Output prefix (writes PREFIX.tsv and PREFIX.pdf)")
-    parser.add_argument("-t", "--track-names", nargs="+", default=None,
-                        help="Track names to include (default: all)")
-    parser.add_argument("-p", "--padding", type=int, default=0,
-                        help="Bases to pad each block (default: 0)")
-    parser.add_argument("-r", "--region", default=None,
-                        help="Genomic region to filter, e.g. 'chr2:1,850,700-1,886,852'")
-    parser.add_argument("-b", "--bed-names", nargs="+", default=None,
-                        help="BED feature names to include (default: all)")
-    parser.add_argument("--ylim", nargs=2, type=float, default=None, metavar=("MIN", "MAX"),
-                        help="Y-axis limits for plot (default: auto)")
-    parser.add_argument("--no-tsv", action="store_true",
-                        help="Skip writing the TSV file")
-    parser.add_argument("--no-pdf", action="store_true",
-                        help="Skip writing the PDF file")
+    parser.add_argument(
+        "-o",
+        "--output-prefix",
+        required=True,
+        help="Output prefix (writes PREFIX.tsv and PREFIX.pdf)",
+    )
+    parser.add_argument(
+        "-t",
+        "--track-names",
+        nargs="+",
+        default=None,
+        help="Track names to include (default: all)",
+    )
+    parser.add_argument(
+        "-p",
+        "--padding",
+        type=int,
+        default=0,
+        help="Bases to pad each block (default: 0)",
+    )
+    parser.add_argument(
+        "-r",
+        "--region",
+        default=None,
+        help="Genomic region to filter, e.g. 'chr2:1,850,700-1,886,852'",
+    )
+    parser.add_argument(
+        "-b",
+        "--bed-names",
+        nargs="+",
+        default=None,
+        help="BED feature names to include (default: all)",
+    )
+    parser.add_argument(
+        "--ylim",
+        nargs=2,
+        type=float,
+        default=None,
+        metavar=("MIN", "MAX"),
+        help="Y-axis limits for plot (default: auto)",
+    )
+    parser.add_argument(
+        "--no-tsv", action="store_true", help="Skip writing the TSV file"
+    )
+    parser.add_argument(
+        "--no-pdf", action="store_true", help="Skip writing the PDF file"
+    )
     args = parser.parse_args()
 
     if args.no_tsv and args.no_pdf:
         parser.error("Cannot use both --no-tsv and --no-pdf")
 
     df = get_block_signal_df(
-        args.tracks_json, args.bed12,
-        track_names=args.track_names, padding=args.padding,
+        args.tracks_json,
+        args.bed12,
+        track_names=args.track_names,
+        padding=args.padding,
     )
 
     tsv_path = f"{args.output_prefix}.tsv"
@@ -432,8 +487,11 @@ def plot_block_signal_cli():
     if not args.no_pdf:
         ylim_tuple = tuple(args.ylim) if args.ylim else None
         plot_block_signal(
-            df, pdf_path,
-            track_names=args.track_names, region=args.region,
-            bed_names=args.bed_names, ylim=ylim_tuple,
+            df,
+            pdf_path,
+            track_names=args.track_names,
+            region=args.region,
+            bed_names=args.bed_names,
+            ylim=ylim_tuple,
         )
         print(f"Wrote {pdf_path}", file=sys.stderr)

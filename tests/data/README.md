@@ -2,13 +2,14 @@
 
 ## chr2_1-2333275.fa.gz
 
-This file contains the first 2,333,275 bases of chromosome 2 from the hg38 reference genome, bgzipped for efficient storage and random access.
+This file contains the first 2,333,275 bases of chromosome 2 from the hg38
+reference genome, bgzipped for efficient storage and random access.
 
-**Source**: UCSC hg38 reference genome  
-**Region**: chr2:1-2,333,275  
-**Size**: ~737 KB (bgzipped)  
+**Source**: UCSC hg38 reference genome **Region**: chr2:1-2,333,275 **Size**:
+~737 KB (bgzipped)
 
-This region is used for testing the `spliceai_utils` module, specifically for the test variant at chr2:1,860,161 and surrounding splicing analysis.
+This region is used for testing the `spliceai_utils` module, specifically for
+the test variant at chr2:1,860,161 and surrounding splicing analysis.
 
 ### How it was created
 

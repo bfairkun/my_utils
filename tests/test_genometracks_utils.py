@@ -4,18 +4,19 @@ Tests for genometracks_utils module.
 
 import gzip
 import json
-import pytest
-import numpy as np
 import sys
 from pathlib import Path
+
+import numpy as np
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from my_utils.genometracks_utils import (
+    _intersect_block_intervals,
+    _lookup_value,
     get_bed12_block_coords,
     get_block_signal_df,
-    _lookup_value,
-    _intersect_block_intervals,
 )
 
 
@@ -38,8 +39,20 @@ class TestGetBed12BlockCoords:
         assert blocks == [(5000, 5100), (6000, 6200), (7850, 8000)]
 
     def test_accepts_list_of_fields(self):
-        fields = ["chr1", "1000", "2000", "gene1", "0", "+", "1000", "2000", "0",
-                  "1", "1000,", "0,"]
+        fields = [
+            "chr1",
+            "1000",
+            "2000",
+            "gene1",
+            "0",
+            "+",
+            "1000",
+            "2000",
+            "0",
+            "1",
+            "1000,",
+            "0,",
+        ]
         blocks = get_bed12_block_coords(fields)
         assert blocks == [(1000, 2000)]
 
@@ -157,9 +170,8 @@ class TestGetBlockSignalDfPadding:
         assert len(flank_rows) > 0
         # All flank rows should be outside the original blocks
         for _, row in flank_rows.iterrows():
-            inside = (
-                (row["start"] >= 1000 and row["end"] <= 1200)
-                or (row["start"] >= 1500 and row["end"] <= 2000)
+            inside = (row["start"] >= 1000 and row["end"] <= 1200) or (
+                row["start"] >= 1500 and row["end"] <= 2000
             )
             assert not inside
 
@@ -183,8 +195,16 @@ class TestGetBlockSignalDfPadding:
     def test_output_columns(self, _signal_fixture):
         tracks_path, bed_path = _signal_fixture
         df = get_block_signal_df(tracks_path, bed_path, padding=0)
-        expected = ["bed_name", "chrom", "block_id", "start", "end", "width",
-                    "in_block", "sig"]
+        expected = [
+            "bed_name",
+            "chrom",
+            "block_id",
+            "start",
+            "end",
+            "width",
+            "in_block",
+            "sig",
+        ]
         assert list(df.columns) == expected
 
 

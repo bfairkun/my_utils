@@ -158,6 +158,17 @@ extend-select = [
 ignore = [
   "PLR09",    # Too many <...>
   "PLR2004",  # Magic value used in comparison
+  "SIM108",   # Use ternary operator (if-else is often more readable)
+  "PLW2901",  # Loop variable overwritten (common pattern: line = line.strip())
+  "TRY003",   # Avoid long messages outside exception class (too pedantic)
+  "EM101",    # Exception string literal (too pedantic)
+  "EM102",    # Exception f-string literal (too pedantic)
+  "PT019",    # Fixture without value (false positives with used fixtures)
+  "RET504",   # Unnecessary assignment before return (often improves readability)
+  "PTH123",   # Use Path.open() instead of open() (too pedantic)
+  "RUF005",   # Use iterable unpacking instead of concatenation (stylistic)
+  "ICN001",   # matplotlib should be imported as mpl (not always desired)
+  "PD011",    # Use .to_numpy() instead of .values (too pedantic)
 ]
 # Uncomment if using a _compat.typing backport
 # typing-modules = ["my_utils._compat.typing"]
@@ -166,6 +177,8 @@ ignore = [
 "tests/**" = ["T20"]
 "noxfile.py" = ["T20"]
 "docs/examples/**" = ["T20"]
+"src/my_utils/bed_utils.py" = ["T20", "PLC0415"]        # CLI functions use print and lazy imports
+"src/my_utils/genometracks_utils.py" = ["T20", "PLC0415"]  # CLI functions use print and lazy imports
 
 
 [tool.pylint]
