@@ -524,3 +524,54 @@ def spliceO_predictions(
     )
 
     return final_df
+
+
+def summarize_spliceO_walk(
+    df: pd.DataFrame,
+    summary_func: callable,
+    score_col: str = "score",
+) -> pd.DataFrame:
+    """
+    Reshape spliceO_predictions output to one row per ASO with an aggregated score.
+
+    Args:
+        df: Output DataFrame from spliceO_predictions (or a saved/loaded version).
+        summary_func: Callable that takes a sub-DataFrame (all Site rows for a
+            single ASO, or the WT rows) and returns a scalar score.
+            The sub-DataFrame has the same columns as df.
+            Examples:
+              lambda d: d.loc[d["Site"]=="cryptic_donor", "donor_prob"].iloc[0]
+              lambda d: (d.loc[d["Site"]=="E18_donor", "donor_prob"].iloc[0]
+                         + d.loc[d["Site"]=="E18_acceptor", "acceptor_prob"].iloc[0])
+              lambda d: (d.loc[d["Site"]=="cryptic_donor", "donor_prob"].iloc[0]
+                         / d.loc[d["Site"]=="E18_donor", "donor_prob"].iloc[0])
+        score_col: Name for the score column in the output. Default "score".
+
+    Returns:
+        DataFrame with one row per ASO (unique MaskStart/MaskEnd), columns:
+          - MaskStart (int)
+          - MaskEnd (int)
+          - ASO_Sequence
+          - Mask_Context
+          - {score_col}     : summary_func applied to this ASO's rows
+          - {score_col}_wt  : summary_func applied to the WT rows (constant)
+    """
+    wt_df = df[df["MaskStart"] == "WT"]
+    aso_df = df[df["MaskStart"] != "WT"]
+
+    wt_score = summary_func(wt_df)
+
+    group_keys = ["MaskStart", "MaskEnd", "ASO_Sequence", "Mask_Context"]
+    rows = []
+    for (mask_start, mask_end, aso_seq, mask_ctx), group in aso_df.groupby(group_keys, sort=False):
+        rows.append({
+            "MaskStart": int(mask_start),
+            "MaskEnd": int(mask_end),
+            "ASO_Sequence": aso_seq,
+            "Mask_Context": mask_ctx,
+            score_col: summary_func(group),
+        })
+
+    result = pd.DataFrame(rows)
+    result[f"{score_col}_wt"] = wt_score
+    return result
