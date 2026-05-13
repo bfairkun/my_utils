@@ -16,7 +16,31 @@ import pysam
 from Bio.Seq import Seq
 from keras.models import load_model
 from pkg_resources import resource_filename
-from spliceai.utils import one_hot_encode
+
+# Local re-implementation of spliceai.utils.one_hot_encode.
+# Upstream uses np.fromstring(seq, np.int8) which was removed in numpy>=2 —
+# importing/calling it raises ValueError on modern envs. This version uses
+# np.frombuffer instead, and also maps any non-ACGTN character to the
+# all-zero row (upstream silently maps them to arbitrary rows via ord(c) % 5).
+_ONE_HOT_MAP = np.asarray(
+    [[0, 0, 0, 0], [1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]],
+    dtype=np.int8,
+)
+
+
+def one_hot_encode(seq: str) -> np.ndarray:
+    """One-hot encode a DNA sequence. A=row 0, C=1, G=2, T=3; N and any
+    other character → all-zero row. Output shape: (len(seq), 4), dtype int8.
+    """
+    buf = bytearray(seq.upper().encode("latin-1"))
+    # Map ACGT to 1..4; everything else (including N and any non-ACGT char) to 0.
+    table = bytearray(256)
+    table[ord("A")] = 1
+    table[ord("C")] = 2
+    table[ord("G")] = 3
+    table[ord("T")] = 4
+    idx = np.frombuffer(buf.translate(table), dtype=np.uint8)
+    return _ONE_HOT_MAP[idx]
 
 
 class Variant(NamedTuple):
@@ -563,14 +587,18 @@ def summarize_spliceO_walk(
 
     group_keys = ["MaskStart", "MaskEnd", "ASO_Sequence", "Mask_Context"]
     rows = []
-    for (mask_start, mask_end, aso_seq, mask_ctx), group in aso_df.groupby(group_keys, sort=False):
-        rows.append({
-            "MaskStart": int(mask_start),
-            "MaskEnd": int(mask_end),
-            "ASO_Sequence": aso_seq,
-            "Mask_Context": mask_ctx,
-            score_col: summary_func(group),
-        })
+    for (mask_start, mask_end, aso_seq, mask_ctx), group in aso_df.groupby(
+        group_keys, sort=False
+    ):
+        rows.append(
+            {
+                "MaskStart": int(mask_start),
+                "MaskEnd": int(mask_end),
+                "ASO_Sequence": aso_seq,
+                "Mask_Context": mask_ctx,
+                score_col: summary_func(group),
+            }
+        )
 
     result = pd.DataFrame(rows)
     result[f"{score_col}_wt"] = wt_score

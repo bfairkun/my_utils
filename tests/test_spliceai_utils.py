@@ -5,6 +5,7 @@ Tests for spliceai_utils module.
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 pytest.importorskip(
@@ -17,8 +18,52 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from my_utils.spliceai_utils import (
     Variant,
     load_spliceai_models,
+    one_hot_encode,
     spliceO_predictions,
 )
+
+
+def test_one_hot_encode_canonical_bases():
+    """ACGT map to identity rows; output shape and dtype are correct."""
+    enc = one_hot_encode("ACGT")
+    expected = np.asarray(
+        [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]], dtype=np.int8
+    )
+    assert enc.shape == (4, 4)
+    assert enc.dtype == np.int8
+    np.testing.assert_array_equal(enc, expected)
+
+
+def test_one_hot_encode_n_is_zero_row():
+    """N (and anything not in ACGT) encodes to an all-zero row."""
+    enc = one_hot_encode("NXacgtNn")
+    # Lowercase ACGT must still hit canonical rows; N and X must be zero rows.
+    zero = np.zeros(4, dtype=np.int8)
+    np.testing.assert_array_equal(enc[0], zero)  # N
+    np.testing.assert_array_equal(enc[1], zero)  # X (non-ACGTN)
+    np.testing.assert_array_equal(enc[2], [1, 0, 0, 0])  # a
+    np.testing.assert_array_equal(enc[3], [0, 1, 0, 0])  # c
+    np.testing.assert_array_equal(enc[4], [0, 0, 1, 0])  # g
+    np.testing.assert_array_equal(enc[5], [0, 0, 0, 1])  # t
+    np.testing.assert_array_equal(enc[6], zero)  # N
+    np.testing.assert_array_equal(enc[7], zero)  # n
+
+
+def test_one_hot_encode_empty():
+    """Empty sequence returns shape (0, 4)."""
+    enc = one_hot_encode("")
+    assert enc.shape == (0, 4)
+    assert enc.dtype == np.int8
+
+
+def test_one_hot_encode_long_sequence_length():
+    """Output length matches input length for a long sequence."""
+    seq = "ACGTN" * 1000
+    enc = one_hot_encode(seq)
+    assert enc.shape == (len(seq), 4)
+    # Rows must each sum to 0 (N) or 1 (ACGT) — never multi-hot.
+    row_sums = enc.sum(axis=1)
+    assert set(np.unique(row_sums).tolist()) <= {0, 1}
 
 
 @pytest.fixture(scope="session")
