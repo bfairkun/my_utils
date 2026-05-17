@@ -235,7 +235,7 @@ def walk_sequence_with_Ns(
     sequence: str,
     walk_range: range,
     substitution_length: int = 20,
-    immutable_range: tuple[int, int] | None = None,
+    immutable_ranges: list[tuple[int, int]] | None = None,
 ) -> list[tuple[tuple[int, int], str]]:
     """
     Generate sequences with N substitutions at specified positions.
@@ -244,12 +244,20 @@ def walk_sequence_with_Ns(
         sequence: Input sequence to mutate
         walk_range: Iterable of positions where substitutions should start
         substitution_length: Length of N substitution (default 20)
-        immutable_range: Optional tuple (start, end) defining a region that cannot be substituted.
-                        Immutable bases will be preserved while surrounding bases are masked.
+        immutable_ranges: Optional list of (start, end) tuples defining regions that
+                         cannot be substituted. Each tuple is a half-open interval
+                         [start, end). Bases within any of these ranges will be
+                         preserved while surrounding bases are masked.
 
     Returns:
         List of ((start_idx, end_idx), mutated_sequence) tuples
     """
+    # Pre-build set of protected positions for O(1) lookup
+    protected_positions: set[int] = set()
+    if immutable_ranges is not None:
+        for immutable_start, immutable_end in immutable_ranges:
+            protected_positions.update(range(immutable_start, immutable_end))
+
     substituted_sequences = []
 
     for substitution_start_index in walk_range:
@@ -259,41 +267,12 @@ def walk_sequence_with_Ns(
         if substitution_start_index < 0 or substitution_end_index > len(sequence):
             continue
 
-        # Build the mutated sequence
-        if immutable_range is not None:
-            immutable_start, immutable_end = immutable_range
-
-            # Check if there's overlap with immutable region
-            overlap_start = max(substitution_start_index, immutable_start)
-            overlap_end = min(substitution_end_index, immutable_end)
-
-            if overlap_start < overlap_end:  # There is overlap
-                # Mask before immutable region
-                before_mask = "N" * (overlap_start - substitution_start_index)
-                # Keep immutable region
-                preserved = sequence[overlap_start:overlap_end]
-                # Mask after immutable region
-                after_mask = "N" * (substitution_end_index - overlap_end)
-
-                mutated_sequence = (
-                    sequence[:substitution_start_index]
-                    + before_mask
-                    + preserved
-                    + after_mask
-                    + sequence[substitution_end_index:]
-                )
-            else:  # No overlap
-                mutated_sequence = (
-                    sequence[:substitution_start_index]
-                    + "N" * substitution_length
-                    + sequence[substitution_end_index:]
-                )
-        else:
-            mutated_sequence = (
-                sequence[:substitution_start_index]
-                + "N" * substitution_length
-                + sequence[substitution_end_index:]
-            )
+        # Build masked sequence: replace non-protected positions with N
+        seq_list = list(sequence)
+        for i in range(substitution_start_index, substitution_end_index):
+            if i not in protected_positions:
+                seq_list[i] = "N"
+        mutated_sequence = "".join(seq_list)
 
         substituted_sequences.append(
             ((substitution_start_index, substitution_end_index), mutated_sequence)
@@ -338,7 +317,7 @@ def predict_splice_sites(
     x = one_hot_encode(padded_sequence)[None, :]
 
     # Predict using all models and average the results
-    y = np.mean([model.predict(x) for model in models], axis=0)
+    y = np.mean([model.predict(x, verbose=0) for model in models], axis=0)
 
     # y has shape (1, L, 3) where L is the length of predictions
     # SpliceAI predictions are shorter than input by 2*pad_size
@@ -403,10 +382,11 @@ def spliceO_predictions(
     walk_step: int,
     substitution_length: int,
     sites_of_interest: dict[str, int],
-    models: list,
+    models: list | None = None,
     strand: str = "+",
     variants: list[Variant] | None = None,
-    immutable_range: tuple[int, int] | None = None,
+    immutable_ranges: list[tuple[int, int]] | None = None,
+    predictor_fn=None,
 ) -> pd.DataFrame:
     """
     Perform SpliceO primer walk predictions with optional SNV variants.
@@ -419,15 +399,21 @@ def spliceO_predictions(
         walk_step: Step size for walk
         substitution_length: Length of N-mer substitution
         sites_of_interest: Dict of {name: genomic_position} (1-based)
-        models: Loaded SpliceAI models
+        models: Loaded SpliceAI models (optional when predictor_fn is provided)
         strand: '+' or '-'
         variants: Optional list of SNV Variant objects to apply
-        immutable_range: Optional tuple of (start, end) genomic positions (1-based, fully closed)
-                        that should not be masked with N's. Bases around this range will be masked.
+        immutable_ranges: Optional list of (start, end) genomic position tuples (1-based,
+                         fully closed) that should not be masked with N's. Bases within
+                         any of these ranges will be preserved while surrounding bases
+                         are masked.
+        predictor_fn: Optional callable(seq_str) -> DataFrame(donor_prob, acceptor_prob, seq).
+                      When provided, used instead of SpliceAI models.
 
     Returns:
         DataFrame with predictions for sites of interest across all masked positions
     """
+    if predictor_fn is None and models is None:
+        raise ValueError("Either models or predictor_fn must be provided")
     # Parse region and fetch sequence (with optional SNVs applied)
     chrom, region_start, region_end = interval_notation_to_genomic_pos(region_interval)
     seq = fetch_sequence(
@@ -442,7 +428,10 @@ def spliceO_predictions(
         genomic_pos_array = list(range(region_start + 1, region_start + 1 + seq_len))
 
     # Get predictions for the (possibly mutated) sequence
-    predictions_wt = predict_splice_sites(seq, models)
+    if predictor_fn is not None:
+        predictions_wt = predictor_fn(seq)
+    else:
+        predictions_wt = predict_splice_sites(seq, models)
     predictions_wt = predictions_wt.reset_index(drop=True)
     predictions_wt["GenomicPos"] = genomic_pos_array
     predictions_wt = predictions_wt.set_index("GenomicPos").sort_index()
@@ -455,24 +444,26 @@ def spliceO_predictions(
         walk_start_idx = region_end - walk_interval[1]
         walk_end_idx = region_end - walk_interval[0]
 
-    # Convert genomic immutable_range to sequence indices if provided
-    immutable_range_seq = None
-    if immutable_range is not None:
-        if strand == "+":
-            immutable_start_idx = immutable_range[0] - 1 - region_start
-            immutable_end_idx = immutable_range[1] - region_start  # Exclusive end
-        else:
-            # For minus strand, flip the coordinates
-            immutable_start_idx = region_end - immutable_range[1]
-            immutable_end_idx = region_end - immutable_range[0] + 1  # Exclusive end
-        immutable_range_seq = (immutable_start_idx, immutable_end_idx)
+    # Convert genomic immutable_ranges to sequence indices if provided
+    immutable_ranges_seq = None
+    if immutable_ranges is not None:
+        immutable_ranges_seq = []
+        for immutable_range in immutable_ranges:
+            if strand == "+":
+                immutable_start_idx = immutable_range[0] - 1 - region_start
+                immutable_end_idx = immutable_range[1] - region_start  # Exclusive end
+            else:
+                # For minus strand, flip the coordinates
+                immutable_start_idx = region_end - immutable_range[1]
+                immutable_end_idx = region_end - immutable_range[0] + 1  # Exclusive end
+            immutable_ranges_seq.append((immutable_start_idx, immutable_end_idx))
 
     # Perform primer walks (mask with N's)
     walk_substitutions = walk_sequence_with_Ns(
         seq,
         range(walk_start_idx, walk_end_idx, walk_step),
         substitution_length,
-        immutable_range=immutable_range_seq,
+        immutable_ranges=immutable_ranges_seq,
     )
 
     # Make predictions for each masked sequence
@@ -499,7 +490,10 @@ def spliceO_predictions(
         aso_seq = str(Seq(masked_seq).reverse_complement())
 
         # Make predictions for this masked sequence
-        preds = predict_splice_sites(seq_mut, models)
+        if predictor_fn is not None:
+            preds = predictor_fn(seq_mut)
+        else:
+            preds = predict_splice_sites(seq_mut, models)
         preds = preds.reset_index(drop=True)
         preds["GenomicPos"] = genomic_pos_array
         preds = preds.set_index("GenomicPos").sort_index()

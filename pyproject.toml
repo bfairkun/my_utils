@@ -55,6 +55,7 @@ dependencies = [
 # Keeps the base install lightweight for users who don't need these heavy ML deps
 [project.optional-dependencies]
 spliceai = ["keras", "tensorflow", "spliceai"]
+bigwig = ["pyBigWig"]
 
 # ── Project URLs ─────────────────────────────────────────────────────────────
 # Links shown on the PyPI page sidebar
@@ -72,6 +73,7 @@ Changelog = "https://github.com/bfairkun/my_utils/releases"
 bed6-to-bed12 = "my_utils.bed_utils:bed6_to_bed12_cli"
 bedtobed12 = "my_utils.bed_utils:bedtobed12_cli"
 plot-block-signal = "my_utils.genometracks_utils:plot_block_signal_cli"
+compute-jui = "my_utils.jui_utils:compute_jui_cli"
 
 # ── Setuptools configuration ──────────────────────────────────────────────────
 # Tells setuptools where to find the Python package source code
@@ -220,6 +222,7 @@ ignore = [
 "docs/examples/**" = ["T20"]      # Allow print() in docs examples
 "src/my_utils/bed_utils.py" = ["T20", "PLC0415"]        # CLI functions use print + lazy imports
 "src/my_utils/genometracks_utils.py" = ["T20", "PLC0415"] # CLI functions use print + lazy imports
+"src/my_utils/jui_utils.py" = ["T20", "PLC0415"] # CLI functions use print + lazy imports
 
 
 # ── Pylint configuration ──────────────────────────────────────────────────────
