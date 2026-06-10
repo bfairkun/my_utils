@@ -14,8 +14,8 @@ import numpy as np
 import pandas as pd
 import pysam
 from Bio.Seq import Seq
+from importlib.resources import files
 from keras.models import load_model
-from pkg_resources import resource_filename
 
 # Local re-implementation of spliceai.utils.one_hot_encode.
 # Upstream uses np.fromstring(seq, np.int8) which was removed in numpy>=2 —
@@ -143,34 +143,37 @@ class CoordinateMapper:
         return (ref_pos - 1 - self.region_start) + offset
 
     def hap_to_ref(self, hap_idx: int) -> int | None:
-        """Convert haplotype sequence index (0-based) to reference position (1-based)
-        Returns None if position falls within a deletion"""
-        # This is more complex - need to account for insertions/deletions
-        ref_offset = self.region_start
-        hap_offset = 0
+        """Convert haplotype sequence index (0-based) to reference position (1-based).
+
+        Walks the haplotype left to right, tracking the haplotype cursor and the
+        corresponding 0-based reference cursor across each variant. Bases inside an
+        insertion's alt allele map to the variant's reference position.
+        """
+        # 0-based reference position aligned with `hap_cursor` in haplotype space.
+        ref_cursor = self.region_start
+        hap_cursor = 0
 
         for v in self.variants:
-            variant_hap_start = hap_offset + (v.start - self.region_start)
-            variant_hap_end = variant_hap_start + len(v.alt)
+            # Reference segment before this variant maps 1:1 to haplotype space.
+            pre_len = v.start - ref_cursor
+            if hap_idx < hap_cursor + pre_len:
+                return ref_cursor + (hap_idx - hap_cursor) + 1  # -> 1-based
 
-            if hap_idx < variant_hap_start:
-                # Before this variant
-                return ref_offset + hap_idx - hap_offset + 1  # Convert to 1-based
-            if hap_idx < variant_hap_end:
-                # Within variant alt allele
+            # The variant's alt allele occupies `len(v.alt)` haplotype bases.
+            alt_hap_start = hap_cursor + pre_len
+            alt_hap_end = alt_hap_start + len(v.alt)
+            if hap_idx < alt_hap_end:
                 if v.is_insertion:
-                    # Position is in inserted sequence, map to insertion point
-                    return v.pos
-                # SNV or within alt of complex variant
-                offset_in_variant = hap_idx - variant_hap_start
-                return v.pos + offset_in_variant
+                    return v.pos  # inserted base -> insertion point
+                # SNV / first base(s) of a complex alt -> aligned ref base(s)
+                return v.pos + (hap_idx - alt_hap_start)
 
-            # Update offsets
-            hap_offset += v.indel_length
-            ref_offset = v.end
+            # Advance past the variant.
+            hap_cursor = alt_hap_end
+            ref_cursor = v.end  # 0-based end of the variant's ref span
 
-        # After all variants
-        return ref_offset + (hap_idx - hap_offset) + 1
+        # Trailing reference segment after all variants.
+        return ref_cursor + (hap_idx - hap_cursor) + 1
 
 
 def fetch_sequence(
@@ -182,8 +185,13 @@ def fetch_sequence(
     variants: list[Variant] | None = None,
 ) -> str:
     """
-    Fetch sequence from FASTA file with optional SNV variants applied.
-    Note: Only supports SNVs (single nucleotide variants). Indels will raise an error.
+    Fetch sequence from FASTA file with optional variants applied.
+
+    Supports SNVs and indels. Variants use a left-anchored, VCF-style representation
+    (ref and alt share their leading anchor base(s)): an insertion has len(alt) >
+    len(ref), a deletion has len(alt) < len(ref), an SNV has len(ref) == len(alt) == 1.
+    Variants must lie fully within [start, end). The same representation is assumed by
+    CoordinateMapper in spliceO_predictions when remapping genomic <-> haplotype indices.
 
     Args:
         fasta_path: Path to FASTA file
@@ -191,7 +199,7 @@ def fetch_sequence(
         start: 0-based start position (inclusive)
         end: 0-based end position (exclusive)
         strand: '+' or '-'
-        variants: Optional list of Variant objects (SNVs only)
+        variants: Optional list of Variant objects (SNVs and/or indels)
 
     Returns:
         sequence: str, the (possibly mutated) sequence
@@ -200,28 +208,24 @@ def fetch_sequence(
         sequence = fasta.fetch(chrom, start, end)
 
     if variants:
-        # Filter variants to this region and validate
+        # Filter variants fully contained in this region (plus-strand coords)
         variants_in_region = []
         for v in variants:
             if v.chrom != chrom:
                 continue
             if v.start < start or v.end > end:
                 continue
-
-            # Only allow SNVs
-            if not v.is_snv:
-                raise ValueError(f"Only SNVs are supported. Got: {v}")
-
-            # Validate REF
+            # REF must match the reference genome
             v.validate_ref(fasta_path)
             variants_in_region.append(v)
 
-        # Apply SNVs (no need to worry about offsets since length doesn't change)
+        # Apply variants (SNVs and indels) on the plus strand. Apply right-to-left
+        # (descending start) so earlier offsets stay valid as lengths change.
         if variants_in_region:
             seq_list = list(sequence)
-            for v in variants_in_region:
-                idx = v.start - start
-                seq_list[idx] = v.alt
+            for v in sorted(variants_in_region, key=lambda v: v.start, reverse=True):
+                i = v.start - start
+                seq_list[i : i + len(v.ref)] = list(v.alt)
             sequence = "".join(seq_list)
 
     # Apply strand
@@ -284,7 +288,7 @@ def walk_sequence_with_Ns(
 def load_spliceai_models():
     """Load the SpliceAI models"""
     paths = (f"models/spliceai{x}.h5" for x in range(1, 6))
-    return [load_model(resource_filename("spliceai", x)) for x in paths]
+    return [load_model(str(files("spliceai") / x)) for x in paths]
 
 
 def predict_splice_sites(
@@ -389,8 +393,11 @@ def spliceO_predictions(
     predictor_fn=None,
 ) -> pd.DataFrame:
     """
-    Perform SpliceO primer walk predictions with optional SNV variants.
-    Note: Only SNVs are supported.
+    Perform SpliceO primer walk predictions with optional variants (SNVs and indels).
+    Variants are applied to the haplotype sequence and all genomic <-> sequence-index
+    conversions are routed through CoordinateMapper, so sites_of_interest, walk_interval,
+    immutable_ranges, and the reported MaskStart/MaskEnd stay in genomic coordinates even
+    when an indel changes the sequence length.
 
     Args:
         fasta_path: Path to reference FASTA
@@ -401,7 +408,7 @@ def spliceO_predictions(
         sites_of_interest: Dict of {name: genomic_position} (1-based)
         models: Loaded SpliceAI models (optional when predictor_fn is provided)
         strand: '+' or '-'
-        variants: Optional list of SNV Variant objects to apply
+        variants: Optional list of Variant objects (SNVs and/or indels) to apply
         immutable_ranges: Optional list of (start, end) genomic position tuples (1-based,
                          fully closed) that should not be masked with N's. Bases within
                          any of these ranges will be preserved while surrounding bases
@@ -414,49 +421,59 @@ def spliceO_predictions(
     """
     if predictor_fn is None and models is None:
         raise ValueError("Either models or predictor_fn must be provided")
-    # Parse region and fetch sequence (with optional SNVs applied)
+    # Parse region and fetch the (possibly variant-applied) haplotype sequence
     chrom, region_start, region_end = interval_notation_to_genomic_pos(region_interval)
     seq = fetch_sequence(
         fasta_path, chrom, region_start, region_end, strand=strand, variants=variants
     )
-
-    # Build genomic position array (maps each sequence index to genomic coordinate)
     seq_len = len(seq)
-    if strand == "-":
-        genomic_pos_array = list(range(region_end, region_end - seq_len, -1))
-    else:
-        genomic_pos_array = list(range(region_start + 1, region_start + 1 + seq_len))
 
-    # Get predictions for the (possibly mutated) sequence
+    # Coordinate mapping between 1-based genomic positions and haplotype sequence
+    # indices, accounting for any indels in `variants`. CoordinateMapper works in
+    # plus-strand haplotype space; for the minus strand the SpliceAI sequence is the
+    # reverse complement, so seq index s <-> plus-hap index h via h = seq_len - 1 - s.
+    # With no indels this reduces to the original 1:1 index<->genomic mapping.
+    mapper = CoordinateMapper(region_start, list(variants) if variants else [])
+
+    def gpos_to_seqidx(gpos: int) -> int:
+        h = mapper.ref_to_hap(gpos)
+        return h if strand == "+" else (seq_len - 1 - h)
+
+    def seqidx_to_gpos(sidx: int) -> int:
+        h = sidx if strand == "+" else (seq_len - 1 - sidx)
+        return mapper.hap_to_ref(h)
+
     if predictor_fn is not None:
-        predictions_wt = predictor_fn(seq)
+        predictor = predictor_fn
     else:
-        predictions_wt = predict_splice_sites(seq, models)
-    predictions_wt = predictions_wt.reset_index(drop=True)
-    predictions_wt["GenomicPos"] = genomic_pos_array
-    predictions_wt = predictions_wt.set_index("GenomicPos").sort_index()
+        predictor = lambda s: predict_splice_sites(s, models)  # noqa: E731
 
-    # Convert genomic walk_interval to sequence indices
-    if strand == "+":
-        walk_start_idx = walk_interval[0] - 1 - region_start
-        walk_end_idx = walk_interval[1] - 1 - region_start
-    else:
-        walk_start_idx = region_end - walk_interval[1]
-        walk_end_idx = region_end - walk_interval[0]
+    # Map sites of interest (1-based genomic) -> haplotype sequence indices
+    site_seqidx = {}
+    for name, gpos in sites_of_interest.items():
+        sidx = gpos_to_seqidx(gpos)
+        if not 0 <= sidx < seq_len:
+            raise ValueError(
+                f"Site '{name}' at {chrom}:{gpos} maps outside the region "
+                f"(or falls within a deletion); seq index {sidx}."
+            )
+        site_seqidx[name] = sidx
 
-    # Convert genomic immutable_ranges to sequence indices if provided
+    # Wildtype (unmasked) predictions on the (possibly variant-applied) sequence
+    predictions_wt = predictor(seq).reset_index(drop=True)
+
+    # Convert genomic walk_interval -> sequence index range (orientation-agnostic)
+    walk_start_idx, walk_end_idx = sorted(
+        (gpos_to_seqidx(walk_interval[0]), gpos_to_seqidx(walk_interval[1]))
+    )
+
+    # Convert genomic immutable_ranges -> half-open sequence index ranges
     immutable_ranges_seq = None
     if immutable_ranges is not None:
         immutable_ranges_seq = []
-        for immutable_range in immutable_ranges:
-            if strand == "+":
-                immutable_start_idx = immutable_range[0] - 1 - region_start
-                immutable_end_idx = immutable_range[1] - region_start  # Exclusive end
-            else:
-                # For minus strand, flip the coordinates
-                immutable_start_idx = region_end - immutable_range[1]
-                immutable_end_idx = region_end - immutable_range[0] + 1  # Exclusive end
-            immutable_ranges_seq.append((immutable_start_idx, immutable_end_idx))
+        for g0, g1 in immutable_ranges:
+            lo, hi = sorted((gpos_to_seqidx(g0), gpos_to_seqidx(g1)))
+            immutable_ranges_seq.append((lo, hi + 1))
 
     # Perform primer walks (mask with N's)
     walk_substitutions = walk_sequence_with_Ns(
@@ -466,82 +483,51 @@ def spliceO_predictions(
         immutable_ranges=immutable_ranges_seq,
     )
 
-    # Make predictions for each masked sequence
-    predictions = {}
-    mask_sequences = {}
-    aso_sequences = {}
+    def site_rows(preds_df, mask_start, mask_end, mask_ctx, aso_seq):
+        rows = []
+        for name, sidx in site_seqidx.items():
+            r = preds_df.iloc[sidx]
+            rows.append(
+                {
+                    "MaskStart": mask_start,
+                    "MaskEnd": mask_end,
+                    "GenomicPos": seqidx_to_gpos(sidx),
+                    "donor_prob": r["donor_prob"],
+                    "acceptor_prob": r["acceptor_prob"],
+                    "seq": r["seq"],
+                    "Site": name,
+                    "Mask_Context": mask_ctx,
+                    "ASO_Sequence": aso_seq,
+                }
+            )
+        return rows
 
+    records = []
     for (start_idx, end_idx), seq_mut in walk_substitutions:
-        # Convert sequence indices to genomic coordinates for the mask
-        if strand == "+":
-            mask_start_genomic = region_start + start_idx + 1
-            mask_end_genomic = region_start + end_idx
-        else:
-            mask_start_genomic = region_end - end_idx + 1
-            mask_end_genomic = region_end - start_idx
+        # Genomic bounds of the masked window (min/max over covered positions, so the
+        # values are correct even when the mask spans an indel).
+        covered = [seqidx_to_gpos(s) for s in range(start_idx, end_idx)]
+        mask_start_genomic = min(covered)
+        mask_end_genomic = max(covered)
 
-        # Extract context sequence (±5 bp around mask with N's)
+        # Context sequence (±5 bp around mask, with N's)
         context_start = max(0, start_idx - 5)
-        context_end = min(len(seq), end_idx + 5)
+        context_end = min(seq_len, end_idx + 5)
         mask_context = seq_mut[context_start:context_end]
 
-        # Get ASO sequence (reverse complement of masked region)
+        # ASO sequence = reverse complement of the masked region
         masked_seq = seq[start_idx:end_idx]
         aso_seq = str(Seq(masked_seq).reverse_complement())
 
-        # Make predictions for this masked sequence
-        if predictor_fn is not None:
-            preds = predictor_fn(seq_mut)
-        else:
-            preds = predict_splice_sites(seq_mut, models)
-        preds = preds.reset_index(drop=True)
-        preds["GenomicPos"] = genomic_pos_array
-        preds = preds.set_index("GenomicPos").sort_index()
+        preds = predictor(seq_mut).reset_index(drop=True)
+        records.extend(
+            site_rows(preds, mask_start_genomic, mask_end_genomic, mask_context, aso_seq)
+        )
 
-        predictions[(mask_start_genomic, mask_end_genomic)] = preds
-        mask_sequences[(mask_start_genomic, mask_end_genomic)] = mask_context
-        aso_sequences[(mask_start_genomic, mask_end_genomic)] = aso_seq
+    # Wildtype control rows (MaskStart/MaskEnd = "WT")
+    records.extend(site_rows(predictions_wt, "WT", "WT", "", ""))
 
-    # Concatenate all predictions
-    predictions = pd.concat(predictions.values(), keys=predictions.keys())
-    predictions.index.names = ["MaskStart", "MaskEnd", "GenomicPos"]
-
-    # Select only sites of interest
-    selected = predictions.loc[pd.IndexSlice[:, :, list(sites_of_interest.values())], :]
-    selected_reset = selected.reset_index()
-
-    # Add mask context and ASO sequences
-    selected_reset["Mask_Context"] = selected_reset.apply(
-        lambda row: mask_sequences.get((row["MaskStart"], row["MaskEnd"]), ""), axis=1
-    )
-    selected_reset["ASO_Sequence"] = selected_reset.apply(
-        lambda row: aso_sequences.get((row["MaskStart"], row["MaskEnd"]), ""), axis=1
-    )
-
-    # Add wildtype control (unmasked sequence)
-    wt_selected = predictions_wt.loc[list(sites_of_interest.values())].reset_index()
-    wt_selected["Site"] = [
-        k for k, v in sites_of_interest.items() if v in wt_selected["GenomicPos"].values
-    ]
-    wt_selected["MaskStart"] = "WT"
-    wt_selected["MaskEnd"] = "WT"
-    wt_selected["Mask_Context"] = ""
-    wt_selected["ASO_Sequence"] = ""
-
-    # Combine masked and wildtype results
-    final_df = pd.concat(
-        [
-            selected_reset.assign(
-                Site=selected_reset["GenomicPos"].map(
-                    {v: k for k, v in sites_of_interest.items()}
-                )
-            ),
-            wt_selected,
-        ],
-        ignore_index=True,
-    )
-
-    return final_df
+    return pd.DataFrame.from_records(records)
 
 
 def summarize_spliceO_walk(

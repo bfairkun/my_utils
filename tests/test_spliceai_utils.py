@@ -230,7 +230,7 @@ def test_spliceO_predictions_with_immutable_range(fasta_path, spliceai_models):
         models=spliceai_models,
         strand="-",
         variants=None,
-        immutable_range=(1860160, 1860163),  # Protect 4 bases around cryptic donor site
+        immutable_ranges=[(1860160, 1860163)],  # Protect bases around cryptic donor site
     )
 
     assert len(results_immutable) > 0, "Should return predictions"
