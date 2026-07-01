@@ -2,13 +2,14 @@
 ASO off-target analysis utilities.
 
 Two main functions:
-  run_blast()              – BLAST a dict of {name: sequence} and return raw hits
-  parse_blast_offtargets() – classify hits and return a per-ASO summary table
+  run_blast()              - BLAST a dict of {name: sequence} and return raw hits
+  parse_blast_offtargets() - classify hits and return a per-ASO summary table
 """
 
 import os
 import subprocess
 import tempfile
+from pathlib import Path
 
 import pandas as pd
 from Bio.SeqUtils import MeltingTemp as mt
@@ -18,22 +19,38 @@ from Bio.SeqUtils import MeltingTemp as mt
 # ---------------------------------------------------------------------------
 
 _BLAST_COLS = [
-    "qseqid", "sseqid", "pident", "length", "mismatch", "gapopen",
-    "qstart", "qend", "sstart", "send", "evalue", "bitscore",
-    "stitle", "qseq",
+    "qseqid",
+    "sseqid",
+    "pident",
+    "length",
+    "mismatch",
+    "gapopen",
+    "qstart",
+    "qend",
+    "sstart",
+    "send",
+    "evalue",
+    "bitscore",
+    "stitle",
+    "qseq",
 ]
 
-_BLAST_DB_DEFAULT = (
-    "/project2/yangili1/bjf79/ReferenceGenomes/GRCh38_GencodeRelease44Comprehensive/Blastdb/Hg38Genome_And_Gencodev49Transcripts"
-)
+_BLAST_DB_DEFAULT = "/project2/yangili1/bjf79/ReferenceGenomes/GRCh38_GencodeRelease44Comprehensive/Blastdb/Hg38Genome_And_Gencodev49Transcripts"
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
-def run_blast(aso_dict, blast_db=_BLAST_DB_DEFAULT, max_target_seqs=100,
-              blastn_path="blastn"):
+
+def run_blast(
+    aso_dict,
+    blast_db=_BLAST_DB_DEFAULT,
+    max_target_seqs=100,
+    blastn_path="blastn",
+    num_threads=1,
+    chunk_size=None,
+):
     """Run blastn on a dict of {name: sequence} and return raw hit table.
 
     Parameters
@@ -49,6 +66,13 @@ def run_blast(aso_dict, blast_db=_BLAST_DB_DEFAULT, max_target_seqs=100,
         Path to the ``blastn`` executable.  Defaults to ``"blastn"`` (i.e.
         uses whatever is on ``$PATH``).  Override with a full path when
         calling from a script that doesn't inherit the conda env PATH.
+    num_threads : int
+        Passed to ``-num_threads``.  Default 1 keeps memory usage predictable;
+        increase only when the database fits comfortably in RAM.
+    chunk_size : int or None
+        If set, split ``aso_dict`` into batches of this size and concatenate
+        results.  Useful when the full query set causes OOM on large databases
+        (e.g. repetitive intronic regions generating many BLAST seeds).
 
     Returns
     -------
@@ -60,6 +84,25 @@ def run_blast(aso_dict, blast_db=_BLAST_DB_DEFAULT, max_target_seqs=100,
         numeric casting.  sstart > send indicates a minus-strand hit (blastn
         convention).
     """
+    if chunk_size is not None:
+        items = list(aso_dict.items())
+        chunks = [
+            dict(items[i : i + chunk_size]) for i in range(0, len(items), chunk_size)
+        ]
+        return pd.concat(
+            [
+                run_blast(
+                    c,
+                    blast_db=blast_db,
+                    max_target_seqs=max_target_seqs,
+                    blastn_path=blastn_path,
+                    num_threads=num_threads,
+                )
+                for c in chunks
+            ],
+            ignore_index=True,
+        )
+
     fd, fasta_path = tempfile.mkstemp(suffix=".fa")
     try:
         with os.fdopen(fd, "w") as fh:
@@ -68,22 +111,31 @@ def run_blast(aso_dict, blast_db=_BLAST_DB_DEFAULT, max_target_seqs=100,
 
         cmd = [
             blastn_path,
-            "-db", blast_db,
-            "-outfmt", "7 std stitle qseq",
-            "-max_target_seqs", str(max_target_seqs),
-            "-task", "blastn-short",
-            "-query", fasta_path,
+            "-db",
+            blast_db,
+            "-outfmt",
+            "7 std stitle qseq",
+            "-max_target_seqs",
+            str(max_target_seqs),
+            "-num_threads",
+            str(num_threads),
+            "-task",
+            "blastn-short",
+            "-query",
+            fasta_path,
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
     finally:
-        os.unlink(fasta_path)
+        Path(fasta_path).unlink()
 
-    # Parse tabular output — skip comment lines that start with '#'
-    lines = [l for l in result.stdout.splitlines() if l and not l.startswith("#")]
+    # Parse tabular output - skip comment lines that start with '#'
+    lines = [
+        line for line in result.stdout.splitlines() if line and not line.startswith("#")
+    ]
     if not lines:
         return pd.DataFrame(columns=_BLAST_COLS)
 
-    blast_df = pd.DataFrame([l.split("\t") for l in lines], columns=_BLAST_COLS)
+    blast_df = pd.DataFrame([line.split("\t") for line in lines], columns=_BLAST_COLS)
 
     # Cast numeric columns
     int_cols = ["length", "mismatch", "gapopen", "qstart", "qend", "sstart", "send"]
@@ -94,8 +146,9 @@ def run_blast(aso_dict, blast_db=_BLAST_DB_DEFAULT, max_target_seqs=100,
     return blast_df
 
 
-def parse_blast_offtargets(blast_df, walk_df, delta_tm=10,
-                           FilterTranscriptomeHitsForMinusStrand=True):
+def parse_blast_offtargets(
+    blast_df, walk_df, delta_tm=10, FilterTranscriptomeHitsForMinusStrand=True
+):
     """Classify BLAST hits and build a per-ASO off-target summary.
 
     Expects ``blast_df["qseqid"]`` to be formatted as ``"{MaskStart}_{MaskEnd}"``
@@ -104,10 +157,10 @@ def parse_blast_offtargets(blast_df, walk_df, delta_tm=10,
 
     For each unique ASO (identified by MaskStart / MaskEnd):
 
-    * **best_hit_tm** – Tm of the best-scoring genome hit.
-    * **on-target gene** – any transcriptome gene whose best-transcript Tm
+    * **best_hit_tm** - Tm of the best-scoring genome hit.
+    * **on-target gene** - any transcriptome gene whose best-transcript Tm
       equals best_hit_tm (i.e. it carries the same target sequence).
-    * **off-targets** – all other hits within *delta_tm* °C of best_hit_tm.
+    * **off-targets** - all other hits within *delta_tm* °C of best_hit_tm.
 
     Parameters
     ----------
@@ -117,7 +170,7 @@ def parse_blast_offtargets(blast_df, walk_df, delta_tm=10,
         Original walk-results table with columns ``MaskStart``, ``MaskEnd``,
         ``ASO_Sequence`` (and any other columns to carry through).
     delta_tm : float
-        Hits with ``|Tm − best_hit_tm| <= delta_tm`` are considered
+        Hits with ``|Tm - best_hit_tm| <= delta_tm`` are considered
         potentially off-target.  Default: 10 °C.
     FilterTranscriptomeHitsForMinusStrand : bool
         If True (default), only transcriptome hits on the minus strand
@@ -133,14 +186,14 @@ def parse_blast_offtargets(blast_df, walk_df, delta_tm=10,
         occurrence for each MaskStart/MaskEnd) plus:
 
         * ``best_hit_tm``
-        * ``n_genome_offtargets``           – unique genomic loci
-        * ``n_transcriptome_offtargets``    – unique off-target genes
-        * ``genome_offtarget_locs``         – comma-sep ``chr:start-stop`` strings
-        * ``genome_offtarget_tms``          – comma-sep Tms (descending)
-        * ``genome_offtarget_strands``      – comma-sep strands for each genome locus
-        * ``transcriptome_offtarget_genes`` – comma-sep gene names
-        * ``transcriptome_offtarget_tms``   – comma-sep Tms (descending)
-        * ``transcriptome_offtarget_strands`` – comma-sep strands for each off-target gene
+        * ``n_genome_offtargets``           - unique genomic loci
+        * ``n_transcriptome_offtargets``    - unique off-target genes
+        * ``genome_offtarget_locs``         - comma-sep ``chr:start-stop`` strings
+        * ``genome_offtarget_tms``          - comma-sep Tms (descending)
+        * ``genome_offtarget_strands``      - comma-sep strands for each genome locus
+        * ``transcriptome_offtarget_genes`` - comma-sep gene names
+        * ``transcriptome_offtarget_tms``   - comma-sep Tms (descending)
+        * ``transcriptome_offtarget_strands`` - comma-sep strands for each off-target gene
           (always ``"-"`` when FilterTranscriptomeHitsForMinusStrand is True)
     """
     hits = blast_df.copy()
@@ -150,8 +203,10 @@ def parse_blast_offtargets(blast_df, walk_df, delta_tm=10,
     # strand="-" then sort so sstart is always the smaller coordinate.
     hits["strand"] = (hits["send"] > hits["sstart"]).map({True: "+", False: "-"})
     hits[["sstart", "send"]] = pd.DataFrame(
-        {"sstart": hits[["sstart", "send"]].min(axis=1),
-         "send":   hits[["sstart", "send"]].max(axis=1)}
+        {
+            "sstart": hits[["sstart", "send"]].min(axis=1),
+            "send": hits[["sstart", "send"]].max(axis=1),
+        }
     )
 
     # --- Tm from query-aligned subsequence (gaps stripped) -------------------
@@ -175,7 +230,7 @@ def parse_blast_offtargets(blast_df, walk_df, delta_tm=10,
         return fields[5] if len(fields) > 5 else None
 
     tr_mask = hits["hit_source"] == "transcriptome"
-    hits.loc[tr_mask, "ensg_id"]   = hits.loc[tr_mask, "sseqid"].apply(_ensg_id)
+    hits.loc[tr_mask, "ensg_id"] = hits.loc[tr_mask, "sseqid"].apply(_ensg_id)
     hits.loc[tr_mask, "gene_name"] = hits.loc[tr_mask, "sseqid"].apply(_gene_name)
 
     ge_mask = hits["hit_source"] == "genome"
@@ -187,17 +242,19 @@ def parse_blast_offtargets(blast_df, walk_df, delta_tm=10,
     # --- Recover MaskStart / MaskEnd from qseqid ----------------------------
     split = hits["qseqid"].str.split("_", n=1, expand=True)
     hits["MaskStart"] = split[0].astype(int)
-    hits["MaskEnd"]   = split[1].astype(int)
+    hits["MaskEnd"] = split[1].astype(int)
 
     # --- On-target genome locus (exact coordinate match) --------------------
     hits["is_on_target_locus"] = (
         (hits["hit_source"] == "genome")
         & (hits["sstart"] == hits["MaskStart"])
-        & (hits["send"]   == hits["MaskEnd"])
+        & (hits["send"] == hits["MaskEnd"])
     )
 
     # --- best_hit_tm per query (best genome hit by bitscore) ----------------
-    genome_hits = hits[hits["hit_source"] == "genome"].sort_values("bitscore", ascending=False)
+    genome_hits = hits[hits["hit_source"] == "genome"].sort_values(
+        "bitscore", ascending=False
+    )
     best_genome = (
         genome_hits.groupby("qseqid", as_index=False)
         .first()[["qseqid", "tm"]]
@@ -213,8 +270,7 @@ def parse_blast_offtargets(blast_df, walk_df, delta_tm=10,
     # excluding the on-target locus.
     genome_off = (
         hits_close[
-            (hits_close["hit_source"] == "genome")
-            & ~hits_close["is_on_target_locus"]
+            (hits_close["hit_source"] == "genome") & ~hits_close["is_on_target_locus"]
         ]
         .sort_values(["qseqid", "genome_loc", "tm"], ascending=[True, True, False])
         .groupby(["qseqid", "genome_loc"], as_index=False)
@@ -222,8 +278,7 @@ def parse_blast_offtargets(blast_df, walk_df, delta_tm=10,
         .sort_values(["qseqid", "tm"], ascending=[True, False])
     )
     genome_summary = (
-        genome_off
-        .groupby("qseqid")
+        genome_off.groupby("qseqid")
         .agg(
             n_genome_offtargets=("genome_loc", "count"),
             genome_offtarget_locs=("genome_loc", ",".join),
@@ -239,26 +294,31 @@ def parse_blast_offtargets(blast_df, walk_df, delta_tm=10,
     if FilterTranscriptomeHitsForMinusStrand:
         tx_hits = tx_hits[tx_hits["strand"] == "-"]
     gene_best = (
-        tx_hits
-        .sort_values(["qseqid", "ensg_id", "gene_name", "tm"], ascending=[True, True, True, False])
+        tx_hits.sort_values(
+            ["qseqid", "ensg_id", "gene_name", "tm"],
+            ascending=[True, True, True, False],
+        )
         .groupby(["qseqid", "ensg_id", "gene_name"], as_index=False)
         .first()[["qseqid", "ensg_id", "gene_name", "tm", "strand"]]
         .rename(columns={"tm": "gene_best_tm"})
         .merge(best_genome, on="qseqid", how="left")
     )
-    gene_best["is_on_target_gene"] = gene_best["gene_best_tm"] == gene_best["best_hit_tm"]
+    gene_best["is_on_target_gene"] = (
+        gene_best["gene_best_tm"] == gene_best["best_hit_tm"]
+    )
 
-    tx_off = (
-        gene_best[~gene_best["is_on_target_gene"]]
-        .sort_values(["qseqid", "gene_best_tm"], ascending=[True, False])
+    tx_off = gene_best[~gene_best["is_on_target_gene"]].sort_values(
+        ["qseqid", "gene_best_tm"], ascending=[True, False]
     )
     tx_summary = (
-        tx_off
-        .groupby("qseqid")
+        tx_off.groupby("qseqid")
         .agg(
             n_transcriptome_offtargets=("ensg_id", "count"),
             transcriptome_offtarget_genes=("gene_name", ",".join),
-            transcriptome_offtarget_tms=("gene_best_tm", lambda x: ",".join(str(v) for v in x)),
+            transcriptome_offtarget_tms=(
+                "gene_best_tm",
+                lambda x: ",".join(str(v) for v in x),
+            ),
             transcriptome_offtarget_strands=("strand", ",".join),
         )
         .reset_index()
@@ -271,17 +331,25 @@ def parse_blast_offtargets(blast_df, walk_df, delta_tm=10,
     )
 
     summary = (
-        unique_asos
-        .merge(best_genome, on="qseqid", how="left")
+        unique_asos.merge(best_genome, on="qseqid", how="left")
         .merge(genome_summary, on="qseqid", how="left")
         .merge(tx_summary, on="qseqid", how="left")
     )
 
-    summary["n_genome_offtargets"]        = summary["n_genome_offtargets"].fillna(0).astype(int)
-    summary["n_transcriptome_offtargets"] = summary["n_transcriptome_offtargets"].fillna(0).astype(int)
-    for col in ["genome_offtarget_locs", "genome_offtarget_tms", "genome_offtarget_strands",
-                "transcriptome_offtarget_genes", "transcriptome_offtarget_tms",
-                "transcriptome_offtarget_strands"]:
+    summary["n_genome_offtargets"] = (
+        summary["n_genome_offtargets"].fillna(0).astype(int)
+    )
+    summary["n_transcriptome_offtargets"] = (
+        summary["n_transcriptome_offtargets"].fillna(0).astype(int)
+    )
+    for col in [
+        "genome_offtarget_locs",
+        "genome_offtarget_tms",
+        "genome_offtarget_strands",
+        "transcriptome_offtarget_genes",
+        "transcriptome_offtarget_tms",
+        "transcriptome_offtarget_strands",
+    ]:
         summary[col] = summary[col].fillna("")
 
     return summary.drop(columns=["qseqid"])
