@@ -7,6 +7,7 @@ Two main functions:
 """
 
 import os
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -17,6 +18,10 @@ from Bio.SeqUtils import MeltingTemp as mt
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
+
+# Ensembl/GENCODE transcript ids across species, e.g. human ENST00000..., mouse
+# ENSMUST00000... . Used to tell transcriptome hits from genome (chromosome) hits.
+_ENSEMBL_TRANSCRIPT_RE = re.compile(r"^ENS[A-Z]*T\d")
 
 _BLAST_COLS = [
     "qseqid",
@@ -214,11 +219,12 @@ def parse_blast_offtargets(
 
     # --- Classify hit source -------------------------------------------------
     # Transcriptome entries: sseqid is the full pipe-delimited FASTA header
-    # (no spaces → BLAST treats the whole string as the ID).
-    # Format: ENST...|ENSG...|OTTHUMG...|OTTHUMT...|transcript_name|gene_name|len|biotype|
+    # (no spaces → BLAST treats the whole string as the ID). GENCODE format:
+    # ENST...|ENSG...|OTTHUMG...|OTTHUMT...|transcript_name|gene_name|len|biotype|
+    # (mouse: ENSMUST...|ENSMUSG...|... — same layout, different id prefix).
     # Genome entries: sseqid = chromosome name (e.g. "chr2").
     hits["hit_source"] = hits["sseqid"].apply(
-        lambda s: "transcriptome" if s.startswith("ENST") else "genome"
+        lambda s: "transcriptome" if _ENSEMBL_TRANSCRIPT_RE.match(s) else "genome"
     )
 
     def _ensg_id(sseqid):
